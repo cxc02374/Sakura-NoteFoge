@@ -10,7 +10,7 @@ if not getattr(sys, 'frozen', False):
     if str(_src) not in sys.path:
         sys.path.insert(0, str(_src))
 
-from noteforge.main import run_app  # noqa: E402
+from noteforge.main import main  # noqa: E402
 
 if __name__ == "__main__":
-    raise SystemExit(run_app())
+    raise SystemExit(main())
