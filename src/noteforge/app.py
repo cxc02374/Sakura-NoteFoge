@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import json
 import os
 import re
 import shutil
@@ -154,12 +155,18 @@ class NoteForgeWindow(QMainWindow):
         self.current_file: Path | None = None
         self.theme_mode: str = "light"  # light | dark
         self._find_text: str = ""
+        self._recent_files: list[str] = []
         self.base_dir = BASE_DIR
         self.data_dir = self.base_dir / "data"
         self.autosave_dir = self.data_dir / "autosave"
         self.history_dir = self.data_dir / "history"
         self.autosave_dir.mkdir(parents=True, exist_ok=True)
         self.history_dir.mkdir(parents=True, exist_ok=True)
+
+        # 設定ロード（テーマ・最近開いたファイル）
+        settings = self._load_settings()
+        self.theme_mode = settings.get("theme", "light")
+        self._recent_files = settings.get("recent_files", [])
 
         self.editor = MarkdownEditor(self.get_image_drop_dir, self.open_markdown_file, self.show_status)
         self.editor.setPlaceholderText(
@@ -170,20 +177,23 @@ class NoteForgeWindow(QMainWindow):
         self.outline = QListWidget()
         self.outline.itemClicked.connect(self.jump_to_heading)
 
-        root = QSplitter(Qt.Orientation.Horizontal)
-        root.addWidget(self._wrap_pane("アウトライン", self.outline, "見出し一覧（# 見出し / 1. 章タイトル）。クリックで本文へ移動"))
-        root.addWidget(self._wrap_pane("Markdown編集", self.editor, "本文編集。md/txtのD&Dでファイルを開き、画像D&Dで本文へ挿入"))
-        root.addWidget(self._wrap_pane("プレビュー", self.preview, "編集結果の表示（Mermaid/コードハイライト対応）"))
-        root.setSizes([280, 560, 560])
+        self.splitter = QSplitter(Qt.Orientation.Horizontal)
+        self.splitter.addWidget(self._wrap_pane("アウトライン", self.outline, "見出し一覧（# 見出し / 1. 章タイトル）。クリックで本文へ移動"))
+        self.splitter.addWidget(self._wrap_pane("Markdown編集", self.editor, "本文編集。md/txtのD&Dでファイルを開き、画像D&Dで本文へ挿入"))
+        self.splitter.addWidget(self._wrap_pane("プレビュー", self.preview, "編集結果の表示（Mermaid/コードハイライト対応）"))
+        self.splitter.setSizes([280, 560, 560])
 
         wrapper = QWidget()
         wrapper_layout = QVBoxLayout(wrapper)
         wrapper_layout.setContentsMargins(0, 0, 0, 0)
-        wrapper_layout.addWidget(root)
+        wrapper_layout.addWidget(self.splitter)
         self.setCentralWidget(wrapper)
 
         self._create_actions()
         self._create_menus()
+        # 保存済みテーマをメニューのチェック状態に反映
+        self.act_theme_light.setChecked(self.theme_mode == "light")
+        self.act_theme_dark.setChecked(self.theme_mode == "dark")
         self._apply_editor_theme()
 
         self.editor.textChanged.connect(self.on_text_changed)
@@ -193,7 +203,7 @@ class NoteForgeWindow(QMainWindow):
         self.autosave_timer.timeout.connect(self.autosave)
 
         self.refresh_preview()
-        self.center_on_primary_screen()
+        self._restore_window_state(settings)
         self._update_file_label()
 
     def _wrap_pane(self, title: str, widget: QWidget, tip: str) -> QWidget:
@@ -210,6 +220,26 @@ class NoteForgeWindow(QMainWindow):
         layout.addWidget(label, 0)
         layout.addWidget(widget, 1)
         return container
+
+    def _restore_window_state(self, settings: dict) -> None:
+        """settings.json からウィンドウ位置・サイズ・ペイン幅を復元。未記録なら屋中屋表示。"""
+        geom = settings.get("geometry")
+        sizes = settings.get("splitter_sizes")
+        if geom and all(k in geom for k in ("x", "y", "w", "h")):
+            self.setGeometry(geom["x"], geom["y"], geom["w"], geom["h"])
+        else:
+            self.center_on_primary_screen()
+        if sizes and len(sizes) == 3:
+            self.splitter.setSizes(sizes)
+
+    def closeEvent(self, event) -> None:
+        """close 時にウィンドウ状態を追加保存。"""
+        g = self.geometry()
+        self._save_settings(
+            extra={"geometry": {"x": g.x(), "y": g.y(), "w": g.width(), "h": g.height()},
+                   "splitter_sizes": self.splitter.sizes()}
+        )
+        super().closeEvent(event)
 
     def center_on_primary_screen(self):
         app = QApplication.instance()
@@ -276,6 +306,9 @@ class NoteForgeWindow(QMainWindow):
         menu_file.addAction(self.act_save)
         menu_file.addAction(self.act_save_as)
         menu_file.addSeparator()
+        self._menu_recent = menu_file.addMenu("最近開いたファイル")
+        self._rebuild_recent_menu()
+        menu_file.addSeparator()
         menu_file.addAction(self.act_export_pdf)
 
         menu_edit = self.menuBar().addMenu("編集")
@@ -318,12 +351,73 @@ class NoteForgeWindow(QMainWindow):
             "- ファイル > PDFとして出力 でPDF化\n"
         )
 
+    def _settings_path(self) -> Path:
+        return self.data_dir / "settings.json"
+
+    def _load_settings(self) -> dict:
+        p = self.data_dir / "settings.json"
+        if p.exists():
+            try:
+                return json.loads(p.read_text(encoding="utf-8"))
+            except Exception:
+                pass
+        return {}
+
+    def _save_settings(self, extra: dict | None = None) -> None:
+        settings: dict = {
+            "theme": self.theme_mode,
+            "recent_files": self._recent_files,
+        }
+        if extra:
+            settings.update(extra)
+        try:
+            self.data_dir.mkdir(parents=True, exist_ok=True)
+            self._settings_path().write_text(
+                json.dumps(settings, ensure_ascii=False, indent=2), encoding="utf-8"
+            )
+        except Exception:
+            pass
+
+    def _add_recent_file(self, path: Path) -> None:
+        s = str(path)
+        if s in self._recent_files:
+            self._recent_files.remove(s)
+        self._recent_files.insert(0, s)
+        self._recent_files = self._recent_files[:15]  # 最大15件
+        self._save_settings()
+        self._rebuild_recent_menu()
+
+    def _rebuild_recent_menu(self) -> None:
+        self._menu_recent.clear()
+        valid = [p for p in self._recent_files if Path(p).exists()]
+        if not valid:
+            act = QAction("（履歴なし）", self)
+            act.setEnabled(False)
+            self._menu_recent.addAction(act)
+            return
+        for p_str in valid:
+            p = Path(p_str)
+            act = QAction(p.name, self)
+            act.setToolTip(p_str)
+            act.triggered.connect(lambda checked=False, _p=p: self.open_markdown_file(_p))
+            self._menu_recent.addAction(act)
+        self._menu_recent.addSeparator()
+        act_clear = QAction("履歴をクリア", self)
+        act_clear.triggered.connect(self._clear_recent_files)
+        self._menu_recent.addAction(act_clear)
+
+    def _clear_recent_files(self) -> None:
+        self._recent_files = []
+        self._save_settings()
+        self._rebuild_recent_menu()
+
     def set_theme(self, mode: str) -> None:
         self.theme_mode = mode
         self.act_theme_light.setChecked(mode == "light")
         self.act_theme_dark.setChecked(mode == "dark")
         self._apply_editor_theme()
         self.refresh_preview()
+        self._save_settings()
 
     def _apply_editor_theme(self) -> None:
         if self.theme_mode == "dark":
@@ -560,6 +654,7 @@ document.addEventListener('DOMContentLoaded', () => {{
         self.editor.setPlainText(text)
         self.setWindowTitle(f"Sakura NoteForge - {path.name}")
         self._update_file_label()
+        self._add_recent_file(path)
         self.show_status(f"開きました: {path}", 3000)
 
     def _update_file_label(self) -> None:
