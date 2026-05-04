@@ -365,6 +365,10 @@ class NoteForgeWindow(QMainWindow):
         self.act_export_pdf = QAction("PDFとして出力", self)
         self.act_export_pdf.triggered.connect(self.export_pdf)
 
+        self.act_reload_document = QAction("再読み込み", self)
+        self.act_reload_document.setShortcut(QKeySequence("F5"))
+        self.act_reload_document.triggered.connect(self.reload_current_document)
+
         self.act_insert_design_template = QAction("設計テンプレートを挿入", self)
         self.act_insert_design_template.triggered.connect(self.insert_design_template)
 
@@ -400,6 +404,7 @@ class NoteForgeWindow(QMainWindow):
         menu_file = self.menuBar().addMenu("ファイル")
         menu_file.addAction(self.act_new_tab)
         menu_file.addAction(self.act_open)
+        menu_file.addAction(self.act_reload_document)
         menu_file.addAction(self.act_save)
         menu_file.addAction(self.act_save_as)
         menu_file.addSeparator()
@@ -920,6 +925,47 @@ document.addEventListener('DOMContentLoaded', () => {{
         self._update_file_label()
         self._add_recent_file(path)
         self.show_status(f"開きました: {path}", 3000)
+
+    def reload_current_document(self) -> None:
+        editor = self._current_editor()
+        if editor is None:
+            return
+
+        path = self._editor_file(editor)
+        if path is None:
+            self.show_status("未保存タブは再読み込みできません（先に保存してください）", 3000)
+            return
+        if not path.exists():
+            self.show_status("ファイルが見つかりません", 3000)
+            return
+
+        if editor.document().isModified():
+            reply = QMessageBox.question(
+                self,
+                "再読み込み",
+                "未保存の変更があります。破棄してファイルを再読み込みしますか？",
+                QMessageBox.StandardButton.Yes | QMessageBox.StandardButton.No,
+                QMessageBox.StandardButton.No,
+            )
+            if reply != QMessageBox.StandardButton.Yes:
+                return
+
+        try:
+            text = path.read_text(encoding="utf-8")
+        except UnicodeDecodeError:
+            text = path.read_text(encoding="cp932")
+
+        editor.blockSignals(True)
+        editor.setPlainText(text)
+        editor.blockSignals(False)
+        editor.document().setModified(False)
+        self._set_editor_file(editor, path)
+        self.current_file = path
+        self._update_tab_title(editor)
+        self.refresh_preview()
+        self.refresh_outline()
+        self._update_file_label()
+        self.show_status(f"再読み込みしました: {path.name}", 2000)
 
     def _update_file_label(self) -> None:
         if self.current_file:
