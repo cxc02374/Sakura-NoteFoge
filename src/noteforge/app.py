@@ -64,6 +64,7 @@ from PySide6.QtWidgets import (
     QMessageBox,
     QPushButton,
     QSplitter,
+    QTabWidget,
     QTextEdit,
     QVBoxLayout,
     QWidget,
@@ -168,18 +169,20 @@ class NoteForgeWindow(QMainWindow):
         self.theme_mode = settings.get("theme", "light")
         self._recent_files = settings.get("recent_files", [])
 
-        self.editor = MarkdownEditor(self.get_image_drop_dir, self.open_markdown_file, self.show_status)
-        self.editor.setPlaceholderText(
-            "ここにMarkdownを入力します。\n"
-            "例: # 見出し\n\n- 箇条書き\n\n```python\nprint('hello')\n```"
-        )
+        self.editor_tabs = QTabWidget()
+        self.editor_tabs.setMovable(True)
+        self.editor_tabs.setDocumentMode(True)
+        self.editor_tabs.currentChanged.connect(self.on_tab_changed)
+
+        self._create_editor_tab()
+
         self.preview = QWebEngineView()
         self.outline = QListWidget()
         self.outline.itemClicked.connect(self.jump_to_heading)
 
         self.splitter = QSplitter(Qt.Orientation.Horizontal)
         self.splitter.addWidget(self._wrap_pane("アウトライン", self.outline, "見出し一覧（# 見出し / 1. 章タイトル）。クリックで本文へ移動"))
-        self.splitter.addWidget(self._wrap_pane("Markdown編集", self.editor, "本文編集。md/txtのD&Dでファイルを開き、画像D&Dで本文へ挿入"))
+        self.splitter.addWidget(self._wrap_pane("Markdown編集", self.editor_tabs, "本文編集。md/txtのD&Dでファイルを開き、画像D&Dで本文へ挿入"))
         self.splitter.addWidget(self._wrap_pane("プレビュー", self.preview, "編集結果の表示（Mermaid/コードハイライト対応）"))
         self.splitter.setSizes([280, 560, 560])
 
@@ -195,8 +198,6 @@ class NoteForgeWindow(QMainWindow):
         self.act_theme_light.setChecked(self.theme_mode == "light")
         self.act_theme_dark.setChecked(self.theme_mode == "dark")
         self._apply_editor_theme()
-
-        self.editor.textChanged.connect(self.on_text_changed)
 
         self.autosave_timer = QTimer(self)
         self.autosave_timer.setInterval(self.AUTOSAVE_MS)
@@ -220,6 +221,60 @@ class NoteForgeWindow(QMainWindow):
         layout.addWidget(label, 0)
         layout.addWidget(widget, 1)
         return container
+
+    def _current_editor(self) -> MarkdownEditor | None:
+        w = self.editor_tabs.currentWidget()
+        return w if isinstance(w, MarkdownEditor) else None
+
+    def _editor_file(self, editor: MarkdownEditor) -> Path | None:
+        raw = editor.property("file_path")
+        if not raw:
+            return None
+        return Path(str(raw))
+
+    def _set_editor_file(self, editor: MarkdownEditor, path: Path | None) -> None:
+        editor.setProperty("file_path", str(path) if path else "")
+
+    def _tab_title_for_editor(self, editor: MarkdownEditor) -> str:
+        path = self._editor_file(editor)
+        base = path.name if path else "無題"
+        if editor.document().isModified():
+            return f"* {base}"
+        return base
+
+    def _update_tab_title(self, editor: MarkdownEditor) -> None:
+        idx = self.editor_tabs.indexOf(editor)
+        if idx >= 0:
+            self.editor_tabs.setTabText(idx, self._tab_title_for_editor(editor))
+
+    def _create_editor_tab(self, text: str = "", path: Path | None = None, make_current: bool = True) -> MarkdownEditor:
+        editor = MarkdownEditor(self.get_image_drop_dir, self.open_markdown_file, self.show_status)
+        editor.setPlaceholderText(
+            "ここにMarkdownを入力します。\n"
+            "例: # 見出し\n\n- 箇条書き\n\n```python\nprint('hello')\n```"
+        )
+        editor.textChanged.connect(self.on_text_changed)
+        editor.document().modificationChanged.connect(lambda _changed, e=editor: self._update_tab_title(e))
+
+        self._set_editor_file(editor, path)
+        editor.setPlainText(text)
+        editor.document().setModified(False)
+
+        idx = self.editor_tabs.addTab(editor, self._tab_title_for_editor(editor))
+        if make_current:
+            self.editor_tabs.setCurrentIndex(idx)
+        return editor
+
+    def on_tab_changed(self, _index: int) -> None:
+        editor = self._current_editor()
+        self.current_file = self._editor_file(editor) if editor else None
+        self.refresh_preview()
+        self.refresh_outline()
+        if self.current_file:
+            self.setWindowTitle(f"Sakura NoteForge - {self.current_file.name}")
+        else:
+            self.setWindowTitle("Sakura NoteForge - 無題")
+        self._update_file_label()
 
     def _restore_window_state(self, settings: dict) -> None:
         """settings.json からウィンドウ位置・サイズ・ペイン幅を復元。未記録なら屋中屋表示。"""
@@ -254,6 +309,10 @@ class NoteForgeWindow(QMainWindow):
         self.move(frame.topLeft())
 
     def _create_actions(self):
+        self.act_new_tab = QAction("新規タブ", self)
+        self.act_new_tab.setShortcut(QKeySequence.StandardKey.New)
+        self.act_new_tab.triggered.connect(self.new_tab)
+
         self.act_open = QAction("開く", self)
         self.act_open.setShortcut(QKeySequence.StandardKey.Open)
         self.act_open.triggered.connect(self.open_markdown)
@@ -302,6 +361,7 @@ class NoteForgeWindow(QMainWindow):
 
     def _create_menus(self):
         menu_file = self.menuBar().addMenu("ファイル")
+        menu_file.addAction(self.act_new_tab)
         menu_file.addAction(self.act_open)
         menu_file.addAction(self.act_save)
         menu_file.addAction(self.act_save_as)
@@ -338,7 +398,7 @@ class NoteForgeWindow(QMainWindow):
             "- 中央: Markdown編集\n"
             "- 右: プレビュー\n\n"
             "■ 基本操作\n"
-            "1) ファイル > 開く で .md を開く\n"
+            "1) ファイル > 新規タブ / 開く で作業タブを用意\n"
             "2) 中央ペインで編集\n"
             "3) 右ペインで結果確認（自動反映）\n"
             "4) Ctrl+S で保存\n\n"
@@ -346,10 +406,15 @@ class NoteForgeWindow(QMainWindow):
             "- md/txt を中央へD&D: ファイルを開く\n"
             "- 画像を中央へD&D: ![]() として本文へ挿入\n\n"
             "■ 便利機能\n"
+            "- 複数ファイルを開くとタブで切替編集\n"
             "- 左ペインの項目をクリックすると該当行へジャンプ\n"
             "- 挿入 > 設計テンプレートを挿入 で雛形作成\n"
             "- ファイル > PDFとして出力 でPDF化\n"
         )
+
+    def new_tab(self) -> None:
+        self._create_editor_tab()
+        self.show_status("新規タブを作成しました", 1500)
 
     def _settings_path(self) -> Path:
         return self.data_dir / "settings.json"
@@ -422,15 +487,20 @@ class NoteForgeWindow(QMainWindow):
     def _apply_editor_theme(self) -> None:
         if self.theme_mode == "dark":
             dark_css = "background:#0f1115; color:#f2f2f2; border:1px solid #2b2f36;"
-            self.editor.setStyleSheet(
-                f"QTextEdit {{ {dark_css} selection-background-color:#2f81f7; }}"
-            )
+            editor_css = f"QTextEdit {{ {dark_css} selection-background-color:#2f81f7; }}"
             self.outline.setStyleSheet(
                 f"QListWidget {{ {dark_css} }}"
                 "QListWidget::item:selected { background:#2f81f7; color:#ffffff; }"
             )
+            for i in range(self.editor_tabs.count()):
+                w = self.editor_tabs.widget(i)
+                if isinstance(w, MarkdownEditor):
+                    w.setStyleSheet(editor_css)
         else:
-            self.editor.setStyleSheet("")
+            for i in range(self.editor_tabs.count()):
+                w = self.editor_tabs.widget(i)
+                if isinstance(w, MarkdownEditor):
+                    w.setStyleSheet("")
             self.outline.setStyleSheet("")
 
     def open_find_dialog(self) -> None:
@@ -461,21 +531,24 @@ class NoteForgeWindow(QMainWindow):
         dlg.exec()
 
     def _do_find(self, forward: bool = True) -> None:
+        editor = self._current_editor()
+        if editor is None:
+            return
         if not self._find_text:
             return
         flags = QTextDocument.FindFlag(0)
         if not forward:
             flags |= QTextDocument.FindFlag.FindBackward
-        found = self.editor.find(self._find_text, flags)
+        found = editor.find(self._find_text, flags)
         if not found:
             # 末尾 or 先頭まで来たら折り返し
-            cursor = self.editor.textCursor()
+            cursor = editor.textCursor()
             if forward:
                 cursor.movePosition(cursor.MoveOperation.Start)
             else:
                 cursor.movePosition(cursor.MoveOperation.End)
-            self.editor.setTextCursor(cursor)
-            self.editor.find(self._find_text, flags)
+            editor.setTextCursor(cursor)
+            editor.find(self._find_text, flags)
 
     def find_next(self) -> None:
         self._do_find(forward=True)
@@ -511,19 +584,25 @@ class NoteForgeWindow(QMainWindow):
 
         def _replace():
             _sync()
-            cursor = self.editor.textCursor()
+            editor = self._current_editor()
+            if editor is None:
+                return
+            cursor = editor.textCursor()
             if cursor.hasSelection() and cursor.selectedText() == edit_find.text():
                 cursor.insertText(edit_replace.text())
             self._do_find(forward=True)
 
         def _replace_all():
             _sync()
+            editor = self._current_editor()
+            if editor is None:
+                return
             if not edit_find.text():
                 return
-            text = self.editor.toPlainText()
+            text = editor.toPlainText()
             new_text = text.replace(edit_find.text(), edit_replace.text())
             count = text.count(edit_find.text())
-            self.editor.setPlainText(new_text)
+            editor.setPlainText(new_text)
             self.show_status(f"{count} 件置換しました", 3000)
 
         btn_next.clicked.connect(_next)
@@ -539,7 +618,8 @@ class NoteForgeWindow(QMainWindow):
         self.autosave_timer.start()
 
     def refresh_preview(self):
-        md = self.editor.toPlainText()
+        editor = self._current_editor()
+        md = editor.toPlainText() if editor else ""
         html_body = markdown.markdown(
             md,
             extensions=["fenced_code", "tables", "codehilite", "toc"],
@@ -597,7 +677,8 @@ document.addEventListener('DOMContentLoaded', () => {{
         self.preview.setHtml(html)
 
     def refresh_outline(self):
-        text = self.editor.toPlainText()
+        editor = self._current_editor()
+        text = editor.toPlainText() if editor else ""
         self.outline.clear()
 
         added = 0
@@ -633,15 +714,18 @@ document.addEventListener('DOMContentLoaded', () => {{
             self.outline.addItem(placeholder)
 
     def jump_to_heading(self, item: QListWidgetItem):
+        editor = self._current_editor()
+        if editor is None:
+            return
         raw_line = item.data(Qt.ItemDataRole.UserRole)
         if raw_line is None:
             return
         line_no = int(raw_line)
-        block = self.editor.document().findBlockByLineNumber(line_no - 1)
-        cursor = self.editor.textCursor()
+        block = editor.document().findBlockByLineNumber(line_no - 1)
+        cursor = editor.textCursor()
         cursor.setPosition(block.position())
-        self.editor.setTextCursor(cursor)
-        self.editor.setFocus()
+        editor.setTextCursor(cursor)
+        editor.setFocus()
 
         # プレビューも対応する見出しへスクロール
         heading_idx = item.data(Qt.ItemDataRole.UserRole + 1)
@@ -653,10 +737,11 @@ document.addEventListener('DOMContentLoaded', () => {{
             self.preview.page().runJavaScript(js)
 
     def open_markdown(self):
-        path_str, _ = QFileDialog.getOpenFileName(self, "Markdownを開く", "", "Markdown (*.md);;Text (*.txt)")
-        if not path_str:
+        path_list, _ = QFileDialog.getOpenFileNames(self, "Markdownを開く", "", "Markdown (*.md);;Text (*.txt)")
+        if not path_list:
             return
-        self.open_markdown_file(Path(path_str))
+        for p in path_list:
+            self.open_markdown_file(Path(p))
 
     def open_markdown_file(self, path: Path):
         try:
@@ -664,8 +749,19 @@ document.addEventListener('DOMContentLoaded', () => {{
         except UnicodeDecodeError:
             text = path.read_text(encoding="cp932")
 
+        # 既に開いている場合はそのタブへ移動
+        for i in range(self.editor_tabs.count()):
+            w = self.editor_tabs.widget(i)
+            if isinstance(w, MarkdownEditor):
+                p = self._editor_file(w)
+                if p and p.resolve() == path.resolve():
+                    self.editor_tabs.setCurrentIndex(i)
+                    self.show_status(f"既に開いています: {path.name}", 2500)
+                    return
+
+        editor = self._create_editor_tab(text=text, path=path, make_current=True)
+        editor.document().setModified(False)
         self.current_file = path
-        self.editor.setPlainText(text)
         self.setWindowTitle(f"Sakura NoteForge - {path.name}")
         self._update_file_label()
         self._add_recent_file(path)
@@ -683,43 +779,65 @@ document.addEventListener('DOMContentLoaded', () => {{
         QTimer.singleShot(ms, self._update_file_label)
 
     def save_markdown(self):
+        editor = self._current_editor()
+        if editor is None:
+            return
+        self.current_file = self._editor_file(editor)
         if self.current_file is None:
             self.save_markdown_as()
             return
 
-        self.current_file.write_text(self.editor.toPlainText(), encoding="utf-8")
+        self.current_file.write_text(editor.toPlainText(), encoding="utf-8")
+        editor.document().setModified(False)
+        self._update_tab_title(editor)
         self.write_history_snapshot()
         self._update_file_label()
         self.show_status("保存しました", 2000)
 
     def save_markdown_as(self):
+        editor = self._current_editor()
+        if editor is None:
+            return
         path_str, _ = QFileDialog.getSaveFileName(self, "Markdownを保存", "", "Markdown (*.md)")
         if not path_str:
             return
         path = Path(path_str)
+        self._set_editor_file(editor, path)
+        self._update_tab_title(editor)
         self.current_file = path
         self.save_markdown()
         self.setWindowTitle(f"Sakura NoteForge - {path.name}")
 
     def autosave(self):
+        editor = self._current_editor()
+        if editor is None:
+            return
+        current_file = self._editor_file(editor)
         self.autosave_timer.stop()
-        key = self.current_file.stem if self.current_file else "untitled"
+        key = current_file.stem if current_file else "untitled"
         safe = re.sub(r"[^a-zA-Z0-9_-]", "_", key)
         autosave_path = self.autosave_dir / f"{safe}.autosave.md"
-        autosave_path.write_text(self.editor.toPlainText(), encoding="utf-8")
+        autosave_path.write_text(editor.toPlainText(), encoding="utf-8")
         self.show_status(f"自動保存: {autosave_path.name}", 1500)
 
     def write_history_snapshot(self):
-        if self.current_file is None:
+        editor = self._current_editor()
+        if editor is None:
+            return
+        current_file = self._editor_file(editor)
+        if current_file is None:
             return
         ts = datetime.now().strftime("%Y%m%d_%H%M%S")
-        target_dir = self.history_dir / self.current_file.stem
+        target_dir = self.history_dir / current_file.stem
         target_dir.mkdir(parents=True, exist_ok=True)
         snapshot = target_dir / f"{ts}.md"
-        snapshot.write_text(self.editor.toPlainText(), encoding="utf-8")
+        snapshot.write_text(editor.toPlainText(), encoding="utf-8")
 
     def export_pdf(self):
-        if self.editor.toPlainText().strip() == "":
+        editor = self._current_editor()
+        if editor is None:
+            return
+        if editor.toPlainText().strip() == "":
             QMessageBox.information(self, "PDF出力", "本文が空です。")
             return
 
@@ -732,6 +850,9 @@ document.addEventListener('DOMContentLoaded', () => {{
         self.show_status("PDF出力を開始しました", 3000)
 
     def insert_design_template(self):
+        editor = self._current_editor()
+        if editor is None:
+            return
         template = (
             "# ドキュメントタイトル\n\n"
             "## 1. 背景\n"
@@ -752,7 +873,7 @@ document.addEventListener('DOMContentLoaded', () => {{
             "- 対応\n"
         )
 
-        if self.editor.toPlainText().strip():
+        if editor.toPlainText().strip():
             reply = QMessageBox.question(
                 self,
                 "設計テンプレート挿入",
@@ -760,15 +881,17 @@ document.addEventListener('DOMContentLoaded', () => {{
             )
             if reply != QMessageBox.StandardButton.Yes:
                 return
-            self.editor.insertPlainText("\n\n" + template)
+            editor.insertPlainText("\n\n" + template)
         else:
-            self.editor.setPlainText(template)
+            editor.setPlainText(template)
 
         self.show_status("設計テンプレートを挿入しました", 3000)
 
     def get_image_drop_dir(self) -> Path:
-        if self.current_file:
-            return self.current_file.parent / "images"
+        editor = self._current_editor()
+        current_file = self._editor_file(editor) if editor else None
+        if current_file:
+            return current_file.parent / "images"
         return self.base_dir / "data" / "images"
 
 
