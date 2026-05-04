@@ -47,6 +47,8 @@ jobs:
             --workpath build/windows `
             --icon assets/noteforge_icon.ico `
             --add-data "assets;assets" `
+            --paths src `
+            --collect-all noteforge `
             --collect-all markdown `
             --collect-all pygments `
             run_noteforge_entry.py
