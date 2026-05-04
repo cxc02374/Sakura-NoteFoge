@@ -601,6 +601,7 @@ document.addEventListener('DOMContentLoaded', () => {{
         self.outline.clear()
 
         added = 0
+        heading_idx = 0  # プレビューHTML内の h1~h6 要素インデックス
         for line_no, line in enumerate(text.splitlines(), start=1):
             h = re.match(r"^(#{1,6})\s+(.+)$", line)
             if h:
@@ -608,7 +609,9 @@ document.addEventListener('DOMContentLoaded', () => {{
                 title = h.group(2).strip()
                 item = QListWidgetItem(f"{'  ' * (level - 1)}H{level} {title}")
                 item.setData(Qt.ItemDataRole.UserRole, line_no)
+                item.setData(Qt.ItemDataRole.UserRole + 1, heading_idx)
                 self.outline.addItem(item)
+                heading_idx += 1
                 added += 1
                 continue
 
@@ -619,12 +622,14 @@ document.addEventListener('DOMContentLoaded', () => {{
                 depth = number.count(".")
                 item = QListWidgetItem(f"{'  ' * depth}§ {number} {title}")
                 item.setData(Qt.ItemDataRole.UserRole, line_no)
+                item.setData(Qt.ItemDataRole.UserRole + 1, None)
                 self.outline.addItem(item)
                 added += 1
 
         if added == 0:
             placeholder = QListWidgetItem("（見出しがありません。# 見出し または 1. 章タイトル を書くと表示されます）")
             placeholder.setData(Qt.ItemDataRole.UserRole, None)
+            placeholder.setData(Qt.ItemDataRole.UserRole + 1, None)
             self.outline.addItem(placeholder)
 
     def jump_to_heading(self, item: QListWidgetItem):
@@ -637,6 +642,15 @@ document.addEventListener('DOMContentLoaded', () => {{
         cursor.setPosition(block.position())
         self.editor.setTextCursor(cursor)
         self.editor.setFocus()
+
+        # プレビューも対応する見出しへスクロール
+        heading_idx = item.data(Qt.ItemDataRole.UserRole + 1)
+        if heading_idx is not None:
+            js = (
+                f"var els = document.querySelectorAll('h1,h2,h3,h4,h5,h6');"
+                f"if (els[{heading_idx}]) els[{heading_idx}].scrollIntoView({{behavior:'smooth', block:'start'}});"
+            )
+            self.preview.page().runJavaScript(js)
 
     def open_markdown(self):
         path_str, _ = QFileDialog.getOpenFileName(self, "Markdownを開く", "", "Markdown (*.md);;Text (*.txt)")
