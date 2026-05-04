@@ -1,0 +1,53 @@
+name: Build & Release
+
+on:
+  push:
+    tags:
+      - "v*"
+
+jobs:
+  build-windows:
+    runs-on: windows-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+
+      - name: Install build dependencies
+        run: pip install -r requirements-build.txt
+
+      - name: Extract version
+        id: version
+        run: echo "version=${{ github.ref_name }}" >> $env:GITHUB_OUTPUT
+
+      - name: Build EXE
+        run: |
+          python -m PyInstaller `
+            --noconfirm `
+            --clean `
+            --name SakuraNoteForge `
+            --windowed `
+            --icon assets/noteforge_icon.ico `
+            --add-data "assets;assets" `
+            --collect-all markdown `
+            --collect-all pygments `
+            run_noteforge_entry.py
+
+      - name: Install Inno Setup
+        run: |
+          choco install innosetup --no-progress -y
+
+      - name: Build Installer
+        run: |
+          $IsccPath = "C:\Program Files (x86)\Inno Setup 6\ISCC.exe"
+          & $IsccPath "/DAppVersion=${{ steps.version.outputs.version }}" "installer\SakuraNoteForge.iss"
+        shell: pwsh
+
+      - name: Create Release
+        uses: softprops/action-gh-release@v2
+        with:
+          files: dist/installer/SakuraNoteForge_Setup_*.exe
+          generate_release_notes: true
