@@ -21,7 +21,9 @@ jobs:
           python-version: "3.11"
 
       - name: Install build dependencies
-        run: pip install -r requirements-build.txt
+        run: |
+          pip install --retries 10 --default-timeout 60 -r requirements-build.txt
+          python -m pip install --upgrade pip setuptools wheel
 
       - name: Extract version
         id: version
@@ -38,6 +40,7 @@ jobs:
           Get-ChildItem .
           if (-not (Test-Path "assets\noteforge_icon.ico")) { throw "icon not found" }
           if (-not (Test-Path "run_noteforge_entry.py")) { throw "entry script not found" }
+          Write-Host "Starting PyInstaller build..."
           python -m PyInstaller `
             --noconfirm `
             --clean `
@@ -51,11 +54,26 @@ jobs:
             --collect-all noteforge `
             --collect-all markdown `
             --collect-all pygments `
+            --onefile `
             run_noteforge_entry.py
+          Write-Host "PyInstaller build complete"
 
       - name: Install Inno Setup
+        shell: pwsh
         run: |
-          choco install innosetup --no-progress -y
+          Write-Host "Installing Inno Setup..."
+          $retries = 0
+          while ($retries -lt 3) {
+              try {
+                  choco install innosetup --no-progress -y
+                  exit 0
+              } catch {
+                  $retries++
+                  if ($retries -ge 3) { throw }
+                  Start-Sleep -Seconds 10
+              }
+          }
+          Write-Host "Inno Setup installed"
 
       - name: Build Installer
         run: |
