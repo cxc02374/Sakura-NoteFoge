@@ -172,9 +172,9 @@ class NoteForgeWindow(QMainWindow):
         self.editor_tabs = QTabWidget()
         self.editor_tabs.setMovable(True)
         self.editor_tabs.setDocumentMode(True)
+        self.editor_tabs.setTabsClosable(True)
         self.editor_tabs.currentChanged.connect(self.on_tab_changed)
-
-        self._create_editor_tab()
+        self.editor_tabs.tabCloseRequested.connect(self.close_tab)
 
         self.preview = QWebEngineView()
         self.outline = QListWidget()
@@ -197,6 +197,7 @@ class NoteForgeWindow(QMainWindow):
         # 保存済みテーマをメニューのチェック状態に反映
         self.act_theme_light.setChecked(self.theme_mode == "light")
         self.act_theme_dark.setChecked(self.theme_mode == "dark")
+        self._create_editor_tab()
         self._apply_editor_theme()
 
         self.autosave_timer = QTimer(self)
@@ -263,6 +264,10 @@ class NoteForgeWindow(QMainWindow):
         idx = self.editor_tabs.addTab(editor, self._tab_title_for_editor(editor))
         if make_current:
             self.editor_tabs.setCurrentIndex(idx)
+        # 現在のテーマをこの新規タブにも適用
+        if self.theme_mode == "dark":
+            dark_css = "background:#0f1115; color:#f2f2f2; border:1px solid #2b2f36;"
+            editor.setStyleSheet(f"QTextEdit {{ {dark_css} selection-background-color:#2f81f7; }}")
         return editor
 
     def on_tab_changed(self, _index: int) -> None:
@@ -415,6 +420,35 @@ class NoteForgeWindow(QMainWindow):
     def new_tab(self) -> None:
         self._create_editor_tab()
         self.show_status("新規タブを作成しました", 1500)
+
+    def close_tab(self, index: int) -> None:
+        editor = self.editor_tabs.widget(index)
+        if isinstance(editor, MarkdownEditor) and editor.document().isModified():
+            path = self._editor_file(editor)
+            name = path.name if path else "無題"
+            reply = QMessageBox.question(
+                self,
+                "未保存の変更",
+                f"「{name}」は変更されています。閉じる前に保存しますか？",
+                QMessageBox.StandardButton.Save
+                | QMessageBox.StandardButton.Discard
+                | QMessageBox.StandardButton.Cancel,
+            )
+            if reply == QMessageBox.StandardButton.Cancel:
+                return
+            if reply == QMessageBox.StandardButton.Save:
+                self.editor_tabs.setCurrentIndex(index)
+                self.save_markdown()
+        if self.editor_tabs.count() == 1:
+            # 最後のタブは閉じず、内容をリセットして再利用
+            editor = self.editor_tabs.currentWidget()
+            if isinstance(editor, MarkdownEditor):
+                editor.setPlainText("")
+                self._set_editor_file(editor, None)
+                editor.document().setModified(False)
+                self.editor_tabs.setTabText(0, "無題")
+            return
+        self.editor_tabs.removeTab(index)
 
     def _settings_path(self) -> Path:
         return self.data_dir / "settings.json"
