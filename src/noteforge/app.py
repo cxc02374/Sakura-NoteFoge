@@ -1,11 +1,14 @@
 from __future__ import annotations
 
 import json
+import html
 import os
 import re
 import shutil
 import subprocess
 import sys
+import urllib.request
+from urllib.parse import quote_plus
 from datetime import datetime
 from pathlib import Path
 
@@ -47,7 +50,7 @@ except ModuleNotFoundError as exc:
         "依存パッケージが不足しています。\n"
         f"次を実行してください:\n{install_cmd}"
     ) from exc
-from PySide6.QtCore import QTimer, Qt
+from PySide6.QtCore import QTimer, Qt, QUrl
 from PySide6.QtGui import QAction, QIcon, QKeySequence, QTextDocument
 from PySide6.QtWidgets import (
     QApplication,
@@ -61,6 +64,7 @@ from PySide6.QtWidgets import (
     QListWidget,
     QListWidgetItem,
     QMainWindow,
+    QMenu,
     QMessageBox,
     QPushButton,
     QSplitter,
@@ -70,6 +74,33 @@ from PySide6.QtWidgets import (
     QWidget,
 )
 from PySide6.QtWebEngineWidgets import QWebEngineView
+
+
+class PreviewWebView(QWebEngineView):
+    def __init__(self, translate_handler, parent=None):
+        super().__init__(parent)
+        self._translate_handler = translate_handler
+
+    def contextMenuEvent(self, event):
+        menu = QMenu(self)
+
+        act_back = menu.addAction("戻る")
+        act_back.setEnabled(self.history().canGoBack())
+        act_back.triggered.connect(self.back)
+
+        act_forward = menu.addAction("進む")
+        act_forward.setEnabled(self.history().canGoForward())
+        act_forward.triggered.connect(self.forward)
+
+        act_reload = menu.addAction("再読み込み")
+        act_reload.triggered.connect(self.reload)
+
+        menu.addSeparator()
+
+        act_translate_ja = menu.addAction("日本語に変換（Google翻訳）")
+        act_translate_ja.triggered.connect(self._translate_handler)
+
+        menu.exec(event.globalPos())
 
 
 class MarkdownEditor(QTextEdit):
@@ -176,7 +207,7 @@ class NoteForgeWindow(QMainWindow):
         self.editor_tabs.currentChanged.connect(self.on_tab_changed)
         self.editor_tabs.tabCloseRequested.connect(self.close_tab)
 
-        self.preview = QWebEngineView()
+        self.preview = PreviewWebView(self.translate_preview_to_japanese)
         self.outline = QListWidget()
         self.outline.itemClicked.connect(self.jump_to_heading)
 
@@ -197,12 +228,13 @@ class NoteForgeWindow(QMainWindow):
         # 保存済みテーマをメニューのチェック状態に反映
         self.act_theme_light.setChecked(self.theme_mode == "light")
         self.act_theme_dark.setChecked(self.theme_mode == "dark")
-        self._create_editor_tab()
-        self._apply_editor_theme()
 
         self.autosave_timer = QTimer(self)
         self.autosave_timer.setInterval(self.AUTOSAVE_MS)
         self.autosave_timer.timeout.connect(self.autosave)
+
+        self._create_editor_tab()
+        self._apply_editor_theme()
 
         self.refresh_preview()
         self._restore_window_state(settings)
@@ -414,8 +446,96 @@ class NoteForgeWindow(QMainWindow):
             "- 複数ファイルを開くとタブで切替編集\n"
             "- 左ペインの項目をクリックすると該当行へジャンプ\n"
             "- 挿入 > 設計テンプレートを挿入 で雛形作成\n"
-            "- ファイル > PDFとして出力 でPDF化\n"
+            "- ファイル > PDFとして出力 でPDF化\n\n"
+            "■ プレビューのリンク移動\n"
+            "- リンクをクリックすると、プレビュー内で移動します\n"
+            "- 元のページへ戻る/進む: プレビュー上で右クリック →『戻る』『進む』\n"
+            "- 表示更新: プレビュー上で右クリック →『再読み込み』\n"
+            "- 日本語変換: プレビュー上で右クリック →『日本語に変換（Google翻訳）』\n"
+            "  （同じプレビュー内で本文を直接翻訳表示します）\n"
         )
+
+    def translate_preview_to_japanese(self) -> None:
+        js = (
+            "(function(){"
+            "const s=(window.getSelection&&window.getSelection().toString())||'';"
+            "if(s.trim()) return s;"
+            "const b=document.body;"
+            "return b ? (b.innerText||'') : '';"
+            "})();"
+        )
+        self.preview.page().runJavaScript(js, self._open_translate_text_in_preview)
+
+    def _open_translate_text_in_preview(self, text) -> None:
+        txt = str(text or "").strip()
+        if not txt:
+            self.show_status("翻訳対象テキストが見つかりません", 2500)
+            return
+
+        # 変換APIの長さ制限を考慮して先頭のみ利用
+        max_chars = 2500
+        clipped = txt[:max_chars]
+
+        translated, detected = self._translate_text_with_google(clipped)
+        if not translated:
+            self.show_status("翻訳に失敗しました（接続または応答形式を確認してください）", 3000)
+            return
+
+        translated_html = html.escape(translated).replace("\n", "<br>")
+        source_html = html.escape(clipped).replace("\n", "<br>")
+        page = f"""
+<!doctype html>
+<html lang=\"ja\">
+<head>
+  <meta charset=\"utf-8\">
+  <style>
+    body {{ font-family: 'Segoe UI', sans-serif; margin: 20px; line-height: 1.7; }}
+    .meta {{ color: #666; font-size: 0.9em; margin-bottom: 12px; }}
+    .card {{ border: 1px solid #ddd; border-radius: 8px; padding: 14px; margin-bottom: 14px; }}
+    h2 {{ margin: 0 0 10px 0; font-size: 1.1em; }}
+  </style>
+</head>
+<body>
+  <div class=\"meta\">日本語変換結果（検出言語: {html.escape(detected or 'auto')}）</div>
+  <div class=\"card\">
+    <h2>翻訳結果（日本語）</h2>
+    <div>{translated_html}</div>
+  </div>
+  <div class=\"card\">
+    <h2>元テキスト</h2>
+    <div>{source_html}</div>
+  </div>
+</body>
+</html>
+"""
+        self.preview.setHtml(page)
+
+        if len(txt) > max_chars:
+            self.show_status("本文が長いため先頭部分のみ翻訳表示しました", 2500)
+        else:
+            self.show_status("プレビュー内で日本語変換を表示しました", 2000)
+
+    def _translate_text_with_google(self, text: str) -> tuple[str, str]:
+        url = (
+            "https://translate.googleapis.com/translate_a/single"
+            f"?client=gtx&sl=auto&tl=ja&dt=t&q={quote_plus(text)}"
+        )
+        try:
+            with urllib.request.urlopen(url, timeout=15) as resp:
+                payload = json.loads(resp.read().decode("utf-8"))
+        except Exception:
+            return "", ""
+
+        if not isinstance(payload, list) or not payload:
+            return "", ""
+
+        segments = payload[0] if isinstance(payload[0], list) else []
+        translated = "".join(
+            seg[0] for seg in segments
+            if isinstance(seg, list) and len(seg) > 0 and isinstance(seg[0], str)
+        )
+        detected = payload[2] if len(payload) > 2 and isinstance(payload[2], str) else "auto"
+        return translated, detected
 
     def new_tab(self) -> None:
         self._create_editor_tab()
