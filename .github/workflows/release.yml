@@ -37,7 +37,7 @@ jobs:
         shell: pwsh
         run: |
           Write-Host "Workspace: $PWD"
-          Get-ChildItem .
+          Get-ChildItem . -Recurse -Include "run_noteforge_entry.py", "noteforge_icon.ico" | Select-Object FullName
           if (-not (Test-Path "assets\noteforge_icon.ico")) { throw "icon not found" }
           if (-not (Test-Path "run_noteforge_entry.py")) { throw "entry script not found" }
           Write-Host "Starting PyInstaller build..."
@@ -48,15 +48,17 @@ jobs:
             --windowed `
             --distpath dist/windows `
             --workpath build/windows `
+            --specpath build `
             --icon assets/noteforge_icon.ico `
             --add-data "assets;assets" `
-            --paths src `
             --collect-all noteforge `
             --collect-all markdown `
             --collect-all pygments `
-            --onefile `
+            --collect-all PySide6 `
             run_noteforge_entry.py
+          if ($LASTEXITCODE -ne 0) { throw "PyInstaller failed with exit code $LASTEXITCODE" }
           Write-Host "PyInstaller build complete"
+          Get-ChildItem dist/windows -Recurse
 
       - name: Install Inno Setup
         shell: pwsh
