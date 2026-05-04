@@ -32,7 +32,12 @@ jobs:
           "version=$ver" >> $env:GITHUB_OUTPUT
 
       - name: Build EXE
+        shell: pwsh
         run: |
+          Write-Host "Workspace: $PWD"
+          Get-ChildItem .
+          if (-not (Test-Path "assets\noteforge_icon.ico")) { throw "icon not found" }
+          if (-not (Test-Path "run_noteforge_entry.py")) { throw "entry script not found" }
           python -m PyInstaller `
             --noconfirm `
             --clean `
@@ -40,7 +45,6 @@ jobs:
             --windowed `
             --distpath dist/windows `
             --workpath build/windows `
-            --specpath build `
             --icon assets/noteforge_icon.ico `
             --add-data "assets;assets" `
             --collect-all markdown `
