@@ -4,6 +4,7 @@ on:
   push:
     tags:
       - "v*"
+  workflow_dispatch:
 
 jobs:
   build-windows:
@@ -21,7 +22,11 @@ jobs:
 
       - name: Extract version
         id: version
-        run: echo "version=${{ github.ref_name }}" >> $env:GITHUB_OUTPUT
+        shell: pwsh
+        run: |
+          $ver = "${{ github.ref_name }}"
+          if ($ver.StartsWith("v")) { $ver = $ver.Substring(1) }
+          "version=$ver" >> $env:GITHUB_OUTPUT
 
       - name: Build EXE
         run: |
@@ -30,6 +35,9 @@ jobs:
             --clean `
             --name SakuraNoteForge `
             --windowed `
+            --distpath dist/windows `
+            --workpath build/windows `
+            --specpath build `
             --icon assets/noteforge_icon.ico `
             --add-data "assets;assets" `
             --collect-all markdown `
@@ -43,11 +51,12 @@ jobs:
       - name: Build Installer
         run: |
           $IsccPath = "C:\Program Files (x86)\Inno Setup 6\ISCC.exe"
+          if (-not (Test-Path $IsccPath)) { $IsccPath = "C:\Program Files\Inno Setup 6\ISCC.exe" }
           & $IsccPath "/DAppVersion=${{ steps.version.outputs.version }}" "installer\SakuraNoteForge.iss"
         shell: pwsh
 
       - name: Create Release
         uses: softprops/action-gh-release@v2
         with:
-          files: dist/installer/SakuraNoteForge_Setup_*.exe
+          files: dist/installer/*.exe
           generate_release_notes: true
