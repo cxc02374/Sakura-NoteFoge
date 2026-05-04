@@ -51,6 +51,20 @@ python -m noteforge.main
 .\scripts\build_windows_installer.ps1 -AppVersion "1.0.0"
 ```
 
+### GitHub Actions で自動ビルド/リリース（推奨）
+
+`main` に変更を push 後、**タグを push** すると自動で Windows ビルドと Release 添付が実行されます。
+
+```powershell
+# 例: v1.0.6 をリリース
+git tag -a v1.0.6 -m "v1.0.6: release note"
+git push origin v1.0.6
+```
+
+- リリース確認先: [Releases](https://github.com/cxc02374/Sakura-NoteFoge/releases)
+- 生成物: `SakuraNoteForge_Setup_x.x.x.exe`（GitHub Release の Assets）
+- 失敗時: Actions の `release.yml` ログを確認して再タグ（次版）で再実行
+
 必要ツール:
 - Python 3.11+（SakuraMark共有 `.venv` を推奨）
 - [Inno Setup 6](https://jrsoftware.org/isdl.php)（インストーラー生成時）
