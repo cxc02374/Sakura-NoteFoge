@@ -50,7 +50,7 @@ except ModuleNotFoundError as exc:
         "依存パッケージが不足しています。\n"
         f"次を実行してください:\n{install_cmd}"
     ) from exc
-from PySide6.QtCore import QTimer, Qt, QUrl
+from PySide6.QtCore import QMimeData, QTimer, Qt, QUrl
 from PySide6.QtGui import QAction, QIcon, QKeySequence, QTextDocument
 from PySide6.QtWidgets import (
     QApplication,
@@ -69,7 +69,7 @@ from PySide6.QtWidgets import (
     QPushButton,
     QSplitter,
     QTabWidget,
-    QTextEdit,
+    QPlainTextEdit,
     QVBoxLayout,
     QWidget,
 )
@@ -103,13 +103,35 @@ class PreviewWebView(QWebEngineView):
         menu.exec(event.globalPos())
 
 
-class MarkdownEditor(QTextEdit):
+class MarkdownEditor(QPlainTextEdit):
     def __init__(self, image_dir_getter, markdown_file_opener, status_notifier, parent=None):
         super().__init__(parent)
         self.image_dir_getter = image_dir_getter
         self.markdown_file_opener = markdown_file_opener
         self.status_notifier = status_notifier
         self.setAcceptDrops(True)
+        self.setTabChangesFocus(False)
+        self.setFocusPolicy(Qt.FocusPolicy.StrongFocus)
+
+    @staticmethod
+    def normalize_plain_text(text: str) -> str:
+        return text.replace("\r\n", "\n").replace("\r", "\n").replace("\u2028", "\n").replace("\u2029", "\n")
+
+    def insertFromMimeData(self, source: QMimeData) -> None:
+        if source.hasText():
+            self.insertPlainText(self.normalize_plain_text(source.text()))
+            return
+        super().insertFromMimeData(source)
+
+    def wheelEvent(self, event):
+        if event.modifiers() & Qt.KeyboardModifier.ControlModifier:
+            if event.angleDelta().y() > 0:
+                self.zoomIn(1)
+            elif event.angleDelta().y() < 0:
+                self.zoomOut(1)
+            event.accept()
+            return
+        super().wheelEvent(event)
 
     def dragEnterEvent(self, event):
         if event.mimeData().hasUrls():
@@ -208,6 +230,7 @@ class NoteForgeWindow(QMainWindow):
         self.editor_tabs.tabCloseRequested.connect(self.close_tab)
 
         self.preview = PreviewWebView(self.translate_preview_to_japanese)
+        self.preview.setFocusPolicy(Qt.FocusPolicy.NoFocus)
         self.outline = QListWidget()
         self.outline.itemClicked.connect(self.jump_to_heading)
 
@@ -259,6 +282,11 @@ class NoteForgeWindow(QMainWindow):
         w = self.editor_tabs.currentWidget()
         return w if isinstance(w, MarkdownEditor) else None
 
+    def _editor_text(self, editor: MarkdownEditor | None) -> str:
+        if editor is None:
+            return ""
+        return MarkdownEditor.normalize_plain_text(editor.toPlainText())
+
     def _editor_file(self, editor: MarkdownEditor) -> Path | None:
         raw = editor.property("file_path")
         if not raw:
@@ -296,10 +324,11 @@ class NoteForgeWindow(QMainWindow):
         idx = self.editor_tabs.addTab(editor, self._tab_title_for_editor(editor))
         if make_current:
             self.editor_tabs.setCurrentIndex(idx)
+            self._focus_editor_later(editor)
         # 現在のテーマをこの新規タブにも適用
         if self.theme_mode == "dark":
             dark_css = "background:#0f1115; color:#f2f2f2; border:1px solid #2b2f36;"
-            editor.setStyleSheet(f"QTextEdit {{ {dark_css} selection-background-color:#2f81f7; }}")
+            editor.setStyleSheet(f"QPlainTextEdit {{ {dark_css} selection-background-color:#2f81f7; }}")
         return editor
 
     def on_tab_changed(self, _index: int) -> None:
@@ -307,11 +336,21 @@ class NoteForgeWindow(QMainWindow):
         self.current_file = self._editor_file(editor) if editor else None
         self.refresh_preview()
         self.refresh_outline()
+        if editor is not None:
+            self._focus_editor_later(editor)
         if self.current_file:
             self.setWindowTitle(f"Sakura NoteForge - {self.current_file.name}")
         else:
             self.setWindowTitle("Sakura NoteForge - 無題")
         self._update_file_label()
+
+    def _focus_editor_later(self, editor: MarkdownEditor) -> None:
+        def _focus_once() -> None:
+            if self._current_editor() is editor:
+                editor.setFocus(Qt.FocusReason.OtherFocusReason)
+
+        QTimer.singleShot(0, _focus_once)
+        QTimer.singleShot(60, _focus_once)
 
     def _restore_window_state(self, settings: dict) -> None:
         """settings.json からウィンドウ位置・サイズ・ペイン幅を復元。未記録なら屋中屋表示。"""
@@ -646,7 +685,7 @@ class NoteForgeWindow(QMainWindow):
     def _apply_editor_theme(self) -> None:
         if self.theme_mode == "dark":
             dark_css = "background:#0f1115; color:#f2f2f2; border:1px solid #2b2f36;"
-            editor_css = f"QTextEdit {{ {dark_css} selection-background-color:#2f81f7; }}"
+            editor_css = f"QPlainTextEdit {{ {dark_css} selection-background-color:#2f81f7; }}"
             self.outline.setStyleSheet(
                 f"QListWidget {{ {dark_css} }}"
                 "QListWidget::item:selected { background:#2f81f7; color:#ffffff; }"
@@ -758,7 +797,7 @@ class NoteForgeWindow(QMainWindow):
                 return
             if not edit_find.text():
                 return
-            text = editor.toPlainText()
+            text = self._editor_text(editor)
             new_text = text.replace(edit_find.text(), edit_replace.text())
             count = text.count(edit_find.text())
             editor.setPlainText(new_text)
@@ -778,10 +817,11 @@ class NoteForgeWindow(QMainWindow):
 
     def refresh_preview(self):
         editor = self._current_editor()
-        md = editor.toPlainText() if editor else ""
+        md = self._editor_text(editor)
+        editor_had_focus = bool(editor and editor.hasFocus())
         html_body = markdown.markdown(
             md,
-            extensions=["fenced_code", "tables", "codehilite", "toc"],
+            extensions=["fenced_code", "tables", "codehilite", "toc", "nl2br"],
             output_format="html5",
         )
 
@@ -834,10 +874,12 @@ document.addEventListener('DOMContentLoaded', () => {{
 </html>
         """
         self.preview.setHtml(html)
+        if editor is not None and editor_had_focus:
+            QTimer.singleShot(0, editor.setFocus)
 
     def refresh_outline(self):
         editor = self._current_editor()
-        text = editor.toPlainText() if editor else ""
+        text = self._editor_text(editor)
         self.outline.clear()
 
         added = 0
@@ -987,12 +1029,14 @@ document.addEventListener('DOMContentLoaded', () => {{
             self.save_markdown_as()
             return
 
-        self.current_file.write_text(editor.toPlainText(), encoding="utf-8")
+        self.current_file.write_text(self._editor_text(editor), encoding="utf-8")
         editor.document().setModified(False)
         self._update_tab_title(editor)
         self.write_history_snapshot()
         self._update_file_label()
         self.show_status("保存しました", 2000)
+        saved_name = self.current_file.name if self.current_file else "無題"
+        QMessageBox.information(self, "保存完了", f"保存しました: {saved_name}")
 
     def save_markdown_as(self):
         editor = self._current_editor()
@@ -1017,7 +1061,7 @@ document.addEventListener('DOMContentLoaded', () => {{
         key = current_file.stem if current_file else "untitled"
         safe = re.sub(r"[^a-zA-Z0-9_-]", "_", key)
         autosave_path = self.autosave_dir / f"{safe}.autosave.md"
-        autosave_path.write_text(editor.toPlainText(), encoding="utf-8")
+        autosave_path.write_text(self._editor_text(editor), encoding="utf-8")
         self.show_status(f"自動保存: {autosave_path.name}", 1500)
 
     def write_history_snapshot(self):
@@ -1031,13 +1075,13 @@ document.addEventListener('DOMContentLoaded', () => {{
         target_dir = self.history_dir / current_file.stem
         target_dir.mkdir(parents=True, exist_ok=True)
         snapshot = target_dir / f"{ts}.md"
-        snapshot.write_text(editor.toPlainText(), encoding="utf-8")
+        snapshot.write_text(self._editor_text(editor), encoding="utf-8")
 
     def export_pdf(self):
         editor = self._current_editor()
         if editor is None:
             return
-        if editor.toPlainText().strip() == "":
+        if self._editor_text(editor).strip() == "":
             QMessageBox.information(self, "PDF出力", "本文が空です。")
             return
 
@@ -1073,7 +1117,7 @@ document.addEventListener('DOMContentLoaded', () => {{
             "- 対応\n"
         )
 
-        if editor.toPlainText().strip():
+        if self._editor_text(editor).strip():
             reply = QMessageBox.question(
                 self,
                 "設計テンプレート挿入",

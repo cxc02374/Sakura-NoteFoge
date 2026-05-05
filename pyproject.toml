@@ -1,6 +1,6 @@
 [project]
 name = "sakura-noteforge"
-version = "0.1.0"
+version = "1.1.1"
 description = "Standalone Markdown editor and preview tool for SakuraMark"
 readme = "README.md"
 requires-python = ">=3.11"
