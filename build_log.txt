@@ -1,0 +1,27 @@
+716 INFO: PyInstaller: 6.19.0, contrib hooks: 2026.4
+716 INFO: Python: 3.12.10
+1032 INFO: Platform: Windows-11-10.0.22631-SP0
+1032 INFO: Python environment: D:\OneDrive\ドキュメント\NewProject\SakuraMark\.venv
+1064 INFO: wrote build\SakuraNoteForge.spec
+1074 INFO: Removing temporary files and cleaning cache in C:\Users\pooshikin\AppData\Local\pyinstaller
+Traceback (most recent call last):
+  File "<frozen runpy>", line 198, in _run_module_as_main
+  File "<frozen runpy>", line 88, in _run_code
+  File "D:\OneDrive\ドキュメント\NewProject\SakuraMark\.venv\Lib\site-packages\PyInstaller\__main__.py", line 321, in <module>
+    run()
+  File "D:\OneDrive\ドキュメント\NewProject\SakuraMark\.venv\Lib\site-packages\PyInstaller\__main__.py", line 215, in run
+    run_build(pyi_config, spec_file, **vars(args))
+  File "D:\OneDrive\ドキュメント\NewProject\SakuraMark\.venv\Lib\site-packages\PyInstaller\__main__.py", line 70, in run_build
+    PyInstaller.building.build_main.main(pyi_config, spec_file, **kwargs)
+  File "D:\OneDrive\ドキュメント\NewProject\SakuraMark\.venv\Lib\site-packages\PyInstaller\building\build_main.py", line 1275, in main
+    build(specfile, distpath, workpath, clean_build)
+  File "D:\OneDrive\ドキュメント\NewProject\SakuraMark\.venv\Lib\site-packages\PyInstaller\building\build_main.py", line 1168, in build
+    shutil.rmtree(f)
+  File "C:\Users\pooshikin\AppData\Local\Programs\Python\Python312\Lib\shutil.py", line 781, in rmtree
+    return _rmtree_unsafe(path, onexc)
+           ^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "C:\Users\pooshikin\AppData\Local\Programs\Python\Python312\Lib\shutil.py", line 639, in _rmtree_unsafe
+    onexc(os.rmdir, path, err)
+  File "C:\Users\pooshikin\AppData\Local\Programs\Python\Python312\Lib\shutil.py", line 637, in _rmtree_unsafe
+    os.rmdir(path)
+PermissionError: [WinError 5] アクセスが拒否されました。: 'D:\\OneDrive\\ドキュメント\\NewProject\\SakuraMark\\Sakura NoteForge\\build\\windows\\SakuraNoteForge\\localpycs'

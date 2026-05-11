@@ -1,0 +1,24 @@
+616 INFO: PyInstaller: 6.19.0, contrib hooks: 2026.4
+616 INFO: Python: 3.12.10
+897 INFO: Platform: Windows-11-10.0.22631-SP0
+897 INFO: Python environment: D:\OneDrive\ドキュメント\NewProject\SakuraMark\.venv
+904 INFO: wrote build\SakuraNoteForge.spec
+910 INFO: Removing temporary files and cleaning cache in C:\Users\pooshikin\AppData\Local\pyinstaller
+1015 WARNING: collect_data_files - skipping data collection for module 'noteforge' as it is not a package.
+1031 WARNING: collect_dynamic_libs - skipping library collection for module 'noteforge' as it is not a package.
+1358 WARNING: Failed to collect submodules for 'PySide6.scripts.deploy_lib' because importing 'PySide6.scripts.deploy_lib' raised: ModuleNotFoundError: No module named 'project_lib'
+63137 INFO: Module search paths (PYTHONPATH):
+['D:\\OneDrive\\ドキュメント\\NewProject\\SakuraMark\\Sakura NoteForge',
+ 'C:\\Users\\pooshikin\\AppData\\Local\\Programs\\Python\\Python312\\python312.zip',
+ 'C:\\Users\\pooshikin\\AppData\\Local\\Programs\\Python\\Python312\\DLLs',
+ 'C:\\Users\\pooshikin\\AppData\\Local\\Programs\\Python\\Python312\\Lib',
+ 'C:\\Users\\pooshikin\\AppData\\Local\\Programs\\Python\\Python312',
+ 'D:\\OneDrive\\ドキュメント\\NewProject\\SakuraMark\\.venv',
+ 'D:\\OneDrive\\ドキュメント\\NewProject\\SakuraMark\\.venv\\Lib\\site-packages',
+ 'D:\\OneDrive\\ドキュメント\\NewProject\\SakuraMark\\.venv\\Lib\\site-packages\\win32',
+ 'D:\\OneDrive\\ドキュメント\\NewProject\\SakuraMark\\.venv\\Lib\\site-packages\\win32\\lib',
+ 'D:\\OneDrive\\ドキュメント\\NewProject\\SakuraMark\\.venv\\Lib\\site-packages\\Pythonwin',
+ 'D:\\OneDrive\\ドキュメント\\NewProject\\SakuraMark\\Sakura NoteForge']
+69717 INFO: Appending 'binaries' from .spec
+69852 INFO: Appending 'datas' from .spec
+ERROR: Unable to find 'D:\\OneDrive\\ドキュメント\\NewProject\\SakuraMark\\Sakura NoteForge\\build\\assets' when adding binary and data files.
